@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-API_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Замените на токен вашего бота
+API_TOKEN = "8732335830:AAG_Ig9LChnCkOGEeYP5VH2-ExWBJFd2kJ8"  # Замените на токен вашего бота
 
 # Список 100 регионов / областей (Код региона / Название для интерфейса и масок)
 REGIONS = {
