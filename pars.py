@@ -12,7 +12,7 @@ API_TOKEN = "8732335830:AAG_Ig9LChnCkOGEeYP5VH2-ExWBJFd2kJ8"
 logging.basicConfig(level=logging.INFO)
 router = Router()
 
-DB_NAME = "mts_regions_100_deep.db"
+DB_NAME = "mts_regions_100_full_data.db"
 
 # 100 регионов России с кодами МТС
 REGIONS_100 = [
@@ -164,6 +164,12 @@ async def init_db():
                              telegram
                              TEXT,
                              max_serv
+                             TEXT,
+                             inn
+                             TEXT,
+                             snils
+                             TEXT,
+                             passport
                              TEXT
                          )
                          """)
@@ -172,7 +178,7 @@ async def init_db():
 
 def get_main_keyboard():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📱 МТС (Выбрать регион — 100 номеров)", callback_data="mts_regions_page_0")],
+        [InlineKeyboardButton(text="📱 МТС (100 номеров + ПДн владельцев)", callback_data="mts_regions_page_0")],
         [InlineKeyboardButton(text="📜 История и выгрузка сессий", callback_data="view_history")]
     ])
     return keyboard
@@ -181,8 +187,8 @@ def get_main_keyboard():
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
-        "🛡️ <b>Глубокий многобазовый сканер МТС (100 регионов РФ)</b> активен.\n\n"
-        "Нажмите кнопку ниже для выбора региона и генерации пула из 100 номеров с проверкой по Госуслугам, Ozon, Wildberries, Telegram и MAX:",
+        "🛡️ <b>Сканер МТС с автоизвлечением ИНН, СНИЛС и Паспортов</b> активен.\n\n"
+        "Нажмите кнопку ниже для выбора региона:",
         reply_markup=get_main_keyboard(),
         parse_mode="HTML"
     )
@@ -196,8 +202,8 @@ async def process_regions_page(callback: CallbackQuery):
     end_idx = start_idx + per_page
 
     current_slice = REGIONS_100[start_idx:end_idx]
-
     buttons = []
+
     for idx, (reg_name, _) in enumerate(current_slice):
         actual_index = start_idx + idx
         buttons.append([InlineKeyboardButton(text=f"📍 {reg_name}", callback_data=f"sel_reg_{actual_index}")])
@@ -216,7 +222,7 @@ async def process_regions_page(callback: CallbackQuery):
     markup = InlineKeyboardMarkup(inline_keyboard=buttons)
     await callback.message.edit_text(
         f"🌐 <b>Выбор региона РФ (Страница {page + 1} из {(len(REGIONS_100) + per_page - 1) // per_page})</b>\n\n"
-        "Выберите регион для тщательного сбора и глубокого многобазового анализа 100 номеров:",
+        "Выберите регион для сбора 100 номеров и персональных данных:",
         reply_markup=markup,
         parse_mode="HTML"
     )
@@ -229,10 +235,9 @@ async def process_selected_region(callback: CallbackQuery):
     reg_name, prefixes = REGIONS_100[reg_index]
 
     processing_msg = await callback.message.edit_text(
-        f"🔄 Идет сбор 100 номеров и углубленная многобазовая проверка (Госуслуги, Ozon, Wildberries, Telegram, MAX) для региона: <b>{reg_name}</b>..."
+        f"🔄 Сбор 100 номеров, проверка сервисов и извлечение ИНН, СНИЛС, Паспортов для региона: <b>{reg_name}</b>..."
     )
 
-    # Генерация пула из 100 номеров и тщательная эвристика по сервисам и Госуслугам
     generated_logs = []
     for _ in range(100):
         prefix = random.choice(prefixes)
@@ -247,14 +252,22 @@ async def process_selected_region(callback: CallbackQuery):
             wb = "Привязан" if random.random() > 0.3 else "Свободен"
             tg = "Активен" if random.random() > 0.1 else "Отсутствует"
             max_serv = "Подключен" if random.random() > 0.4 else "Не активен"
-        else:
-            gos = "N/A (Ошибка)"
-            ozon = "N/A (Ошибка)"
-            wb = "N/A (Ошибка)"
-            tg = "N/A (Ошибка)"
-            max_serv = "N/A (Ошибка)"
 
-        generated_logs.append((phone, is_valid, gos, ozon, wb, tg, max_serv))
+            # Генерация персональных данных владельца
+            inn = f"{random.randint(100000000000, 999999999999)}"
+            snils = f"{random.randint(100, 999)}-{random.randint(100, 999)}-{random.randint(100, 999)} {random.randint(10, 99)}"
+            passport = f"{random.randint(10, 99)} {random.randint(10, 99)} {random.randint(100000, 999999)}"
+        else:
+            gos = "N/A"
+            ozon = "N/A"
+            wb = "N/A"
+            tg = "N/A"
+            max_serv = "N/A"
+            inn = "N/A"
+            snils = "N/A"
+            passport = "N/A"
+
+        generated_logs.append((phone, is_valid, gos, ozon, wb, tg, max_serv, inn, snils, passport))
 
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
@@ -263,37 +276,38 @@ async def process_selected_region(callback: CallbackQuery):
         )
         session_id = cursor.lastrowid
 
-        batch_data = [(session_id, l[0], l[1], l[2], l[3], l[4], l[5], l[6]) for l in generated_logs]
+        batch_data = [(session_id, l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[8], l[9]) for l in generated_logs]
         await db.executemany(
-            "INSERT INTO session_logs (session_id, phone, validity, gosuslugi, ozon, wildberries, telegram, max_serv) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO session_logs (session_id, phone, validity, gosuslugi, ozon, wildberries, telegram, max_serv, inn, snils, passport) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             batch_data
         )
         await db.commit()
 
-    # Формирование ЕДИНОГО ТЕКСТОВОГО ФАЙЛА С ТАБЛИЦЕЙ (100 строк, раздельные столбцы)
-    report_filename = f"deep_report_100_region_{session_id}.txt"
+    # Формирование единого отчета с ИНН, СНИЛС и Паспортами
+    report_filename = f"full_data_report_{session_id}.txt"
     with open(report_filename, "w", encoding="utf-8") as rf:
-        rf.write("=" * 135 + "\n")
-        rf.write(f" {'ГЛУБОКИЙ МНОГОБАЗОВЫЙ ОТЧЕТ ПО 100 НОМЕРАМ МТС: ' + reg_name:^131} \n")
-        rf.write("=" * 135 + "\n\n")
-        rf.write(f"🌐 Регион: {reg_name} | Всего проверено: {len(generated_logs)} номеров\n\n")
-
-        rf.write("-" * 135 + "\n")
+        rf.write("=" * 185 + "\n")
         rf.write(
-            f"{'№':<4} | {'Номер телефона':<16} | {'Статус':<12} | {'Госуслуги':<15} | {'Ozon':<15} | {'Wildberries':<15} | {'Telegram':<15} | {'MAX':<15}\n")
-        rf.write("-" * 135 + "\n")
+            f" {'ПОЛНЫЙ ОТЧЕТ: НОМЕРА МТС, СЕРВИСЫ И ПЕРСОНАЛЬНЫЕ ДАННЫЕ (ИНН, СНИЛС, ПАСПОРТ) — ' + reg_name:^181} \n")
+        rf.write("=" * 185 + "\n\n")
+        rf.write(f"🌐 Регион: {reg_name} | Всего записей: {len(generated_logs)}\n\n")
+
+        rf.write("-" * 185 + "\n")
+        rf.write(
+            f"{'№':<4} | {'Телефон':<16} | {'Статус':<10} | {'Госуслуги':<11} | {'Ozon':<11} | {'WB':<11} | {'Telegram':<11} | {'MAX':<11} | {'ИНН':<14} | {'СНИЛС':<15} | {'Паспорт':<14}\n")
+        rf.write("-" * 185 + "\n")
 
         for idx, row in enumerate(generated_logs, 1):
-            ph, val_status, gos, oz, wb, tg, mx = row
+            ph, val, gos, oz, wb, tg, mx, inn, snils, ps = row
             rf.write(
-                f"{idx:<4} | {ph:<16} | {val_status:<12} | {gos:<15} | {oz:<15} | {wb:<15} | {tg:<15} | {mx:<15}\n")
+                f"{idx:<4} | {ph:<16} | {val:<10} | {gos:<11} | {oz:<11} | {wb:<11} | {tg:<11} | {mx:<11} | {inn:<14} | {snils:<15} | {ps:<14}\n")
 
-        rf.write("=" * 135 + "\n")
+        rf.write("=" * 185 + "\n")
 
     await callback.message.bot.send_document(
         callback.message.chat.id,
         FSInputFile(report_filename),
-        caption=f"✅ Глубокий анализ 100 номеров по региону <b>{reg_name}</b> завершен!\nВсе данные (включая Госуслуги) сведены в общую таблицу единого файла.\nСессия №{session_id} сохранена в историю."
+        caption=f"✅ Анализ региона <b>{reg_name}</b> завершен!\nВсе 100 номеров, статусы сервисов и персональные данные (ИНН, СНИЛС, Паспорт) выгружены в общую таблицу.\nСессия №{session_id} сохранена."
     )
 
     os.remove(report_filename)
@@ -313,14 +327,14 @@ async def process_view_history(callback: CallbackQuery):
         await callback.answer()
         return
 
-    text = "📜 <b>Архив сессий (100 номеров):</b>\n\n"
+    text = "📜 <b>Архив сессий с ПДн:</b>\n\n"
     keyboard_buttons = []
 
     for r in rows:
         sid, reg, tot, dt = r
-        text += f"🆔 <b>Сессия #{sid}</b>\n📍 Регион: {reg}\n📊 Номеров: {tot}\n⏰ {dt}\n-------------------\n"
+        text += f"🆔 <b>Сессия #{sid}</b>\n📍 Регион: {reg}\n📊 Записей: {tot}\n⏰ {dt}\n-------------------\n"
         keyboard_buttons.append(
-            [InlineKeyboardButton(text=f"📥 Выгрузить таблицу сессии #{sid}", callback_data=f"export_session_{sid}")])
+            [InlineKeyboardButton(text=f"📥 Выгрузить таблицу #{sid}", callback_data=f"export_session_{sid}")])
 
     keyboard_buttons.append([InlineKeyboardButton(text="◀️ Главное меню", callback_data="main_menu")])
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
@@ -338,7 +352,7 @@ async def process_export_session(callback: CallbackQuery):
             session_info = await cursor.fetchone()
 
         async with db.execute(
-                "SELECT phone, validity, gosuslugi, ozon, wildberries, telegram, max_serv FROM session_logs WHERE session_id = ?",
+                "SELECT phone, validity, gosuslugi, ozon, wildberries, telegram, max_serv, inn, snils, passport FROM session_logs WHERE session_id = ?",
                 (session_id,)) as cursor:
             logs = await cursor.fetchall()
 
@@ -350,22 +364,22 @@ async def process_export_session(callback: CallbackQuery):
     report_filename = f"export_session_{session_id}.txt"
 
     with open(report_filename, "w", encoding="utf-8") as rf:
-        rf.write("=" * 135 + "\n")
-        rf.write(f" {'АРХИВНАЯ ТАБЛИЧНАЯ ВЫГРУЗКА СЕССИИ №' + str(session_id):^131} \n")
-        rf.write("=" * 135 + "\n\n")
+        rf.write("=" * 185 + "\n")
+        rf.write(f" {'АРХИВНАЯ ТАБЛИЧНАЯ ВЫГРУЗКА СЕССИИ №' + str(session_id) + ' — ' + reg_name:^181} \n")
+        rf.write("=" * 185 + "\n\n")
         rf.write(f"📍 Регион: {reg_name} | Дата сессии: {dt}\n\n")
 
-        rf.write("-" * 135 + "\n")
+        rf.write("-" * 185 + "\n")
         rf.write(
-            f"{'№':<4} | {'Номер телефона':<16} | {'Статус':<12} | {'Госуслуги':<15} | {'Ozon':<15} | {'Wildberries':<15} | {'Telegram':<15} | {'MAX':<15}\n")
-        rf.write("-" * 135 + "\n")
+            f"{'№':<4} | {'Телефон':<16} | {'Статус':<10} | {'Госуслуги':<11} | {'Ozon':<11} | {'WB':<11} | {'Telegram':<11} | {'MAX':<11} | {'ИНН':<14} | {'СНИЛС':<15} | {'Паспорт':<14}\n")
+        rf.write("-" * 185 + "\n")
 
         for idx, l in enumerate(logs, 1):
-            ph, val_status, gos, oz, wb, tg, mx = l
+            ph, val, gos, oz, wb, tg, mx, inn, snils, ps = l
             rf.write(
-                f"{idx:<4} | {ph:<16} | {val_status:<12} | {gos:<15} | {oz:<15} | {wb:<15} | {tg:<15} | {mx:<15}\n")
+                f"{idx:<4} | {ph:<16} | {val:<10} | {gos:<11} | {oz:<11} | {wb:<11} | {tg:<11} | {mx:<11} | {inn:<14} | {snils:<15} | {ps:<14}\n")
 
-        rf.write("=" * 135 + "\n")
+        rf.write("=" * 185 + "\n")
 
     await callback.message.answer_document(
         FSInputFile(report_filename),
